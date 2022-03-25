@@ -17,8 +17,8 @@ abstract class OaiMetadataMapBase extends PluginBase implements OaiMetadataMapIn
     {
 
         $template_info = $this->getPluginDefinition()['template'];
-        $record['#theme'] = "{$template_info['name']}__{$template_info['file']}";
-        $return = \Drupal::service('renderer')->renderPlain($record);
+        $record['elements']['#theme'] = "{$template_info['name']}__{$template_info['file']}";
+        $return = \Drupal::service('renderer')->renderPlain($record['elements']);
         return $return;
     }
 

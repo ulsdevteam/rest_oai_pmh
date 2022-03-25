@@ -96,7 +96,10 @@ function rest_oai_pmh_theme($existing, $type, $theme, $path) {
     ],
     'rest_oai_pmh__jpcoar' => [
       'render element' => 'elements',
-    ]
+    ],
+    'rest_oai_pmh__oai_default' => [
+      'render element' => 'elements',
+    ],
   ];
 }
 
