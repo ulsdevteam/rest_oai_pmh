@@ -87,6 +87,23 @@ function rest_oai_pmh_entity_alter($entity, $op = '') {
 }
 
 /**
+ * Implements hook_theme().
+ */
+function rest_oai_pmh_theme($existing, $type, $theme, $path) {
+  return [
+    'rest_oai_pmh__mods' => [
+      'render element' => 'elements',
+    ],
+    'rest_oai_pmh__jpcoar' => [
+      'render element' => 'elements',
+    ],
+    'rest_oai_pmh__oai_default' => [
+      'render element' => 'elements',
+    ],
+  ];
+}
+
+/**
  * Helper function. Create QueueWorker to execute all, or a specific set, of Views that will populate which entities are exposed to OAI
  */
 function rest_oai_pmh_cache_views($view_displays = FALSE, $queue_name = 'rest_oai_pmh_views_cache_cron') {
