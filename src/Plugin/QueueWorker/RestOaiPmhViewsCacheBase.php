@@ -113,11 +113,13 @@ abstract class RestOaiPmhViewsCacheBase extends QueueWorkerBase implements Conta
 
       // See what type of entity was returned by the View and
       // set variable accordingly so we can load the entity.
-      $this->memberEntityType = $view->getBaseEntityType()->id();
-      $this->memberEntityStorage = \Drupal::entityTypeManager()->getStorage($this->memberEntityType);
+      if($view->getBaseEntityType()) {
+        $this->memberEntityType = $view->getBaseEntityType()->id();
+        $this->memberEntityStorage = \Drupal::entityTypeManager()->getStorage($this->memberEntityType);
+      }
 
       // Add the results returned to the OAI cache tables.
-      $this->indexViewRecords($members);
+      $this->indexViewRecords($view, $members);
 
       // @todo track records that existed BEFORE we indexed the sets, and rm
       // any records that once belonged to the set but might no longer belong.
@@ -132,7 +134,7 @@ abstract class RestOaiPmhViewsCacheBase extends QueueWorkerBase implements Conta
   /**
    * Helper function. Add items returned by a view to the OAI cache tables.
    */
-  protected function indexViewRecords($members = FALSE) {
+  protected function indexViewRecords($view, $members = []) {
     foreach ($members as $id => $row) {
       // Init the variables used for the UPSERT database call
       // to add/update this RECORD.
@@ -140,14 +142,20 @@ abstract class RestOaiPmhViewsCacheBase extends QueueWorkerBase implements Conta
         'entity_type',
         'entity_id',
       ];
-      $merge_values = [
-        $this->memberEntityType,
-        $id,
-      ];
-      // Load the entity, partly to ensure it exists
-      // also to get the changed/created properties.
-      $entity = $this->memberEntityStorage->load($id);
+
+      if($view->query instanceof \Drupal\search_api\Plugin\views\query\SearchApiQuery) {
+        $entity = $view->query->getEntityFromRow($row['#row'], 'none', $view);
+      } else {
+        // Load the entity, partly to ensure it exists
+        // also to get the changed/created properties.
+        $entity = $this->memberEntityStorage->load($id);
+      }
       if ($entity) {
+        $merge_values = [
+          $entity->getEntityTypeId(),
+          $entity->id()
+        ];
+
         // Get the changed/created values, if they exist.
         $changed = $entity->hasField('changed') ? $entity->changed->value : \Drupal::time()->requestTime();
         $created = $entity->hasField('created') ? $entity->created->value : $changed;

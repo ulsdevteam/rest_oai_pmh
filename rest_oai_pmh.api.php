@@ -27,3 +27,16 @@ function hook_rest_oai_pmh_metadata_template_alter(array &$template) {
     $template['name'] = 'mymodule';
   }
 }
+
+/**
+ * Alters list of possible ids (sets) for views argument
+ *
+ * @param array $ids
+ * @param \Drupal\views\Plugin\views\argument\ArgumentPluginBase $contextual_filter
+ * @return void
+ */
+function hook_rest_oai_pmh_views_args_alter(array &$ids, $contextual_filter) {
+  if($contextual_filter->view->storage->id() == 'view_name' && $contextual_filter->view->current_display == 'view_display') {
+    $ids = [1, 2, 3];
+  }
+}
