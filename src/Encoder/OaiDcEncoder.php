@@ -73,6 +73,7 @@ class OaiDcEncoder extends XmlEncoder {
     $xml = parent::encode($data, $format, $context);
 
     $search = [
+      'xmlns:mods',
       '<oai_dc ',
       '</oai_dc>',
       '<metadata-xml><![CDATA[',
@@ -81,6 +82,7 @@ class OaiDcEncoder extends XmlEncoder {
       '</oai-dc-string>',
     ];
     $replace = [
+      'xmlns',
       '<oai_dc:dc ',
       '</oai_dc:dc>',
       '',
