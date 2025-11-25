@@ -11,6 +11,7 @@ use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\HttpFoundation\Request;
 use Drupal\Core\Extension\ModuleHandlerInterface;
 use Drupal\Core\Render\RenderContext;
+use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 
 /**
  * Provides a resource to get view modes by entity and bundle.
@@ -290,6 +291,23 @@ class OaiPmh extends ResourceBase {
   }
 
   /**
+   * Helper function to check authentication credentials.
+   *
+   * @throws \Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException
+   *   Thrown when the user is not authenticated or lacks permission.
+   */
+  protected function checkAuthentication() {
+    // Check if user is authenticated
+    if (!$this->currentUser->isAuthenticated()) {
+      // If not, Check if user has specific permission
+      if (!$this->currentUser->hasPermission('restful get oai_pmh')) {
+        // If not, throw access denied exception
+        throw new AccessDeniedHttpException('Access denied: You do not have permission to access this OAI-PMH endpoint.');
+      }
+    }
+  }
+
+  /**
    * Responds to GET requests.
    *
    * @return \Drupal\rest\ResourceResponse
@@ -310,6 +328,10 @@ class OaiPmh extends ResourceBase {
         'oai-dc-string' => $base_oai_url,
       ],
     ];
+
+    // Check authentication before processing any requests
+    // This will throw AccessDeniedHttpException if auth fails
+    $this->checkAuthentication();
 
     $verb = $this->currentRequest->get('verb');
     $set_id = $this->currentRequest->get('set');
