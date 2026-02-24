@@ -590,6 +590,38 @@ class OaiPmh extends ResourceBase {
   }
 
   /**
+   * Normalizes two date strings by ensuring they include a time component.
+   *
+   * If the "from" date does not contain a time, "00:00:00" is appended.
+   * If the "until" date does not contain a time, "23:59:59" is appended.
+   *
+   * @param string $from
+   *   The start date string. If empty, an empty string is returned as-is.
+   * @param string $until
+   *   The end date string. If empty, an empty string is returned as-is.
+   *
+   * @return string[]
+   *   An array containing two elements:
+   *   - The normalized start date string.
+   *   - The normalized end date string.
+   */
+  private function normalizeDates($from, $until) {
+    $hasTime = fn($dateString) =>
+    preg_match('/T\d{2}:\d{2}(:\d{2})?Z?$/', $dateString)
+      || preg_match('/\d{2}:\d{2}(:\d{2})?$/', $dateString);
+
+    if (!empty($from) && !$hasTime($from)) {
+      $from .= " 00:00:00";
+    }
+
+    if (!empty($until) && !$hasTime($until)) {
+      $until .= " 23:59:59";
+    }
+
+    return [$from, $until];
+  }
+
+  /**
    * Helper function to get record IDs.
    */
   private function getRecordIds() {
@@ -599,8 +631,11 @@ class OaiPmh extends ResourceBase {
     $set = $this->currentRequest->get('set');
     $from = $this->currentRequest->get('from');
     $until = $this->currentRequest->get('until');
+    [$from, $until] = $this->normalizeDates($from, $until);
+    
     $cursor = 0;
     $completeListSize = 0;
+
     $views_total = [];
     // If a resumption token was passed, try to find it in the key store.
     if ($resumption_token) {
@@ -616,6 +651,7 @@ class OaiPmh extends ResourceBase {
         $from = $token['from'];
         $until = $token['until'];
         $completeListSize = $token['completeListSize'];
+        [$from, $until] = $this->normalizeDates($from, $until);
       }
       else {
         // If we found a token, and we're here, it means the token is expired
