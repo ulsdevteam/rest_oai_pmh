@@ -469,6 +469,9 @@ class OaiPmh extends ResourceBase {
       $this->oaiEntity = $entity;
       $identifier = $this->buildIdentifier($entity);
       $this->loadEntity($identifier, TRUE);
+      if (!$this->entity) {
+        continue;
+      }
       $this->response[$this->verb]['header'][] = $this->getHeaderById($identifier);
     }
     if (empty($this->response[$this->verb]['header'])) {
@@ -486,6 +489,9 @@ class OaiPmh extends ResourceBase {
       $this->oaiEntity = $entity;
       $identifier = $this->buildIdentifier($entity);
       $this->loadEntity($identifier, TRUE);
+      if (!$this->entity) {
+        continue;
+      }
       $this->response[$this->verb]['record'][] = $this->getRecordById($identifier);
     }
     if (empty($this->response[$this->verb]['record'])) {
