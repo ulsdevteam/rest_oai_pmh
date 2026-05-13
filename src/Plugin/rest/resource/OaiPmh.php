@@ -197,16 +197,16 @@ class OaiPmh extends ResourceBase {
    *   A module handler instance.
    */
   public function __construct(
-        array $configuration,
-        $plugin_id,
-        $plugin_definition,
-        array $serializer_formats,
-        ImmutableConfig $config,
-        LoggerInterface $logger,
-        AccountProxyInterface $current_user,
-        Request $currentRequest,
-        ModuleHandlerInterface $module_handler
-    ) {
+    array $configuration,
+    $plugin_id,
+    $plugin_definition,
+    array $serializer_formats,
+    ImmutableConfig $config,
+    LoggerInterface $logger,
+    AccountProxyInterface $current_user,
+    Request $currentRequest,
+    ModuleHandlerInterface $module_handler,
+  ) {
     parent::__construct($configuration, $plugin_id, $plugin_definition, $serializer_formats, $logger);
 
     $this->currentUser = $current_user;
@@ -312,7 +312,6 @@ class OaiPmh extends ResourceBase {
     ];
 
     $verb = $this->currentRequest->get('verb');
-    $set_id = $this->currentRequest->get('set');
     $verbs = [
       'GetRecord',
       'Identify',
@@ -593,7 +592,6 @@ class OaiPmh extends ResourceBase {
    * Helper function to get record IDs.
    */
   private function getRecordIds() {
-    $verb = $this->response['request']['@verb'];
     $resumption_token = $this->currentRequest->get('resumptionToken');
     $this->metadataPrefix = $this->currentRequest->get('metadataPrefix');
     $set = $this->currentRequest->get('set');
@@ -601,7 +599,6 @@ class OaiPmh extends ResourceBase {
     $until = $this->currentRequest->get('until');
     $cursor = 0;
     $completeListSize = 0;
-    $views_total = [];
     // If a resumption token was passed, try to find it in the key store.
     if ($resumption_token) {
       $token = $this->keyValueStore->get($resumption_token);

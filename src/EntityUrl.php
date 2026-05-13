@@ -20,6 +20,8 @@ class EntityUrl {
    * @param mixed $args
    *   Should contain e.g. ['/node'] or ['/taxonomy/term'].
    *   Defaults to ['/node'].
+   * @param array $context
+   *   Optional callback context from the RDF mapper.
    *
    * @return string
    *   The full, absolute URI (e.g., https://example.com/my-alias-path).

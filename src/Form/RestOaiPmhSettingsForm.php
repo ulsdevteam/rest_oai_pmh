@@ -13,6 +13,8 @@ use Drupal\Core\Extension\ModuleHandlerInterface;
 use Drupal\Core\Path\PathValidatorInterface;
 use Drupal\Core\Cache\CacheBackendInterface;
 use Drupal\Core\ProxyClass\Routing\RouteBuilder;
+use Drupal\rest_oai_pmh\Plugin\OaiCacheManager;
+use Drupal\rest_oai_pmh\Plugin\OaiMetadataMapManager;
 
 /**
  * Module settings admin form.
@@ -56,6 +58,20 @@ class RestOaiPmhSettingsForm extends ConfigFormBase {
   protected $routerBuilder;
 
   /**
+   * The metadata map plugin manager.
+   *
+   * @var \Drupal\rest_oai_pmh\Plugin\OaiMetadataMapManager
+   */
+  protected $metadataMapManager;
+
+  /**
+   * The OAI cache plugin manager.
+   *
+   * @var \Drupal\rest_oai_pmh\Plugin\OaiCacheManager
+   */
+  protected $oaiCacheManager;
+
+  /**
    * Constructs a \Drupal\system\ConfigFormBase object.
    *
    * @param \Drupal\Core\Config\ConfigFactoryInterface $config_factory
@@ -70,8 +86,12 @@ class RestOaiPmhSettingsForm extends ConfigFormBase {
    *   The cache discovery service.
    * @param \Drupal\Core\ProxyClass\Routing\RouteBuilder $router_builder
    *   The router builder service.
+   * @param \Drupal\rest_oai_pmh\Plugin\OaiMetadataMapManager $metadata_map_manager
+   *   The metadata map plugin manager.
+   * @param \Drupal\rest_oai_pmh\Plugin\OaiCacheManager $oai_cache_manager
+   *   The OAI cache plugin manager.
    */
-  public function __construct(ConfigFactoryInterface $config_factory, EntityTypeManagerInterface $entity_type_manager, ModuleHandlerInterface $module_handler, PathValidatorInterface $path_validator, CacheBackendInterface $cache_discovery, RouteBuilder $router_builder) {
+  public function __construct(ConfigFactoryInterface $config_factory, EntityTypeManagerInterface $entity_type_manager, ModuleHandlerInterface $module_handler, PathValidatorInterface $path_validator, CacheBackendInterface $cache_discovery, RouteBuilder $router_builder, OaiMetadataMapManager $metadata_map_manager, OaiCacheManager $oai_cache_manager) {
     $this->setConfigFactory($config_factory);
 
     $this->entityTypeManager = $entity_type_manager;
@@ -79,6 +99,8 @@ class RestOaiPmhSettingsForm extends ConfigFormBase {
     $this->pathValidator = $path_validator;
     $this->cacheDiscovery = $cache_discovery;
     $this->routerBuilder = $router_builder;
+    $this->metadataMapManager = $metadata_map_manager;
+    $this->oaiCacheManager = $oai_cache_manager;
   }
 
   /**
@@ -91,7 +113,9 @@ class RestOaiPmhSettingsForm extends ConfigFormBase {
           $container->get('module_handler'),
           $container->get('path.validator'),
           $container->get('cache.discovery'),
-          $container->get('router.builder')
+          $container->get('router.builder'),
+          $container->get('plugin.manager.oai_metadata_map'),
+          $container->get('plugin.manager.oai_cache')
       );
   }
 
@@ -179,7 +203,7 @@ class RestOaiPmhSettingsForm extends ConfigFormBase {
       '#description' => $this->t('<p>Select which metadata plugins should be enabled.</p>'),
     ];
     $mapping_prefix_plugins = [];
-    foreach (\Drupal::service('plugin.manager.oai_metadata_map')->getDefinitions() as $plugin_id => $plugin_definition) {
+    foreach ($this->metadataMapManager->getDefinitions() as $plugin_id => $plugin_definition) {
       $mapping_prefix_plugins[$plugin_definition['metadata_format']][$plugin_id] = $plugin_definition['label']->render();
     }
     foreach ($mapping_prefix_plugins as $metadata_prefix => $options) {
@@ -260,7 +284,7 @@ class RestOaiPmhSettingsForm extends ConfigFormBase {
       '#required' => TRUE,
       '#default_value' => $cache_technique ?: 'liberal_cache',
     ];
-    foreach (\Drupal::service('plugin.manager.oai_cache')->getDefinitions() as $plugin_id => $plugin_definition) {
+    foreach ($this->oaiCacheManager->getDefinitions() as $plugin_id => $plugin_definition) {
       $form['cache_technique']['#options'][$plugin_id] = $plugin_definition['label']->render();
     }
 

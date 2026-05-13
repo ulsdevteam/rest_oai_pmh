@@ -17,6 +17,10 @@ class PathConverter {
    *
    * @param mixed $path_data
    *   The relative path (e.g., /my-alias-path) passed as the field value.
+   * @param mixed $args
+   *   Optional callback arguments; unused for this converter.
+   * @param array $context
+   *   Optional callback context from the RDF mapper.
    *
    * @return string
    *   The full, absolute URI (e.g., https://example.com/my-alias-path).

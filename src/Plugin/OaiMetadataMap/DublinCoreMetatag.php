@@ -41,7 +41,7 @@ class DublinCoreMetatag extends DublinCoreRdf {
     $allowed_properties = $this->getAllowedProperties('oai_dc');
     $metatags = metatag_generate_entity_all_tags($entity);
     // Go through all the metatags ['#type' => 'tag'] render elements.
-    foreach ($metatags as $term => $metatag) {
+    foreach ($metatags as $metatag) {
       if (empty($metatag['#attributes']['name'])) {
         continue;
       }
