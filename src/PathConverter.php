@@ -21,7 +21,7 @@ class PathConverter {
    * @return string
    *   The full, absolute URI (e.g., https://example.com/my-alias-path).
    */
-  public static function makeAbsoluteUrl($path_data) {
+  public static function makeAbsoluteUrl($path_data, $args = NULL, array $context = []) {
     $path = '';
     if (is_array($path_data) && isset($path_data['alias'])) {
       $path = $path_data['alias'];

@@ -24,7 +24,7 @@ class EntityUrl {
    * @return string
    *   The full, absolute URI (e.g., https://example.com/my-alias-path).
    */
-  public static function makeAbsoluteUrl($id_data, $args) {
+  public static function makeAbsoluteUrl($id_data, $args, array $context = []) {
     $uri = '';
     if (is_array($id_data) && isset($id_data['value'])) {
       $prefix = empty($args[0]) ? '/node' : $args[0];
@@ -40,7 +40,7 @@ class EntityUrl {
     }
     catch (\Exception $e) {
       \Drupal::logger('rest_oai_pmh')->warning('Failed to generate absolute URL for path: @path. Error: @error', [
-        '@path' => $path,
+        '@path' => $uri,
         '@error' => $e->getMessage(),
       ]);
       return '';

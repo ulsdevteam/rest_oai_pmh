@@ -113,7 +113,13 @@ class DublinCoreRdf extends OaiMetadataMapBase {
             $callback = $field_mapping['datatype_callback']['callable'];
             $arguments = $field_mapping['datatype_callback']['arguments'] ?? NULL;
             $data = $item->getValue();
-            $value = call_user_func($callback, $data, $arguments);
+            $value = call_user_func($callback, $data, $arguments, [
+              'entity' => $entity,
+              'field_name' => $field_id,
+              'field_item' => $item,
+              'field_item_list' => $fieldItemList,
+              'field_mapping' => $field_mapping,
+            ]);
           }
           elseif ($index == 'target_id' && !empty($item->entity)) {
             $value = $item->entity->label();
