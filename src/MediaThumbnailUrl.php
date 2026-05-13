@@ -4,8 +4,6 @@ namespace Drupal\rest_oai_pmh;
 
 use Drupal\Core\Entity\ContentEntityInterface;
 use Drupal\Core\Field\FieldItemInterface;
-use Drupal\Core\Url;
-use Drupal\Component\Utility\UrlHelper;
 use Drupal\file\FileInterface;
 use Drupal\media\MediaInterface;
 
@@ -22,15 +20,10 @@ class MediaThumbnailUrl {
    * item does not directly reference a media entity, it will fall back to the
    * dgi_image_discovery service when available.
    *
-   * Supported argument formats:
-   * - ['thumbnail']
-   * - ['image_style' => 'thumbnail']
-   * - ['style' => 'thumbnail']
-   *
    * @param mixed $field_data
    *   The raw field item value array.
    * @param mixed $args
-   *   Optional callback arguments.
+   *   Optional callback arguments; currently unused.
    * @param array $context
    *   Callback context from the RDF mapper.
    *
@@ -52,16 +45,7 @@ class MediaThumbnailUrl {
       return '';
     }
 
-    $style_id = self::resolveStyleId($args);
-    $style = \Drupal::entityTypeManager()->getStorage('image_style')->load($style_id);
-    if (!$style) {
-      \Drupal::logger('rest_oai_pmh')->warning('Unable to load image style "@style" for RDF thumbnail generation.', [
-        '@style' => $style_id,
-      ]);
-      return '';
-    }
-
-    return self::makeAbsoluteFromUrl($style->buildUrl($image->getFileUri()));
+    return \Drupal::service('file_url_generator')->generateAbsoluteString($image->getFileUri());
   }
 
   /**
@@ -123,53 +107,6 @@ class MediaThumbnailUrl {
         '@error' => $e->getMessage(),
       ]);
       return NULL;
-    }
-  }
-
-  /**
-   * Resolve the requested image style ID.
-   */
-  protected static function resolveStyleId($args) : string {
-    if (is_string($args) && $args !== '') {
-      return $args;
-    }
-
-    if (is_array($args)) {
-      if (!empty($args['image_style'])) {
-        return $args['image_style'];
-      }
-      if (!empty($args['style'])) {
-        return $args['style'];
-      }
-      if (!empty($args[0]) && is_string($args[0])) {
-        return $args[0];
-      }
-    }
-
-    return 'thumbnail';
-  }
-
-  /**
-   * Convert a generated URL into an absolute URL if needed.
-   */
-  protected static function makeAbsoluteFromUrl(string $url) : string {
-    if ($url === '' || UrlHelper::isExternal($url)) {
-      return $url;
-    }
-
-    try {
-      if (str_starts_with($url, '/')) {
-        return Url::fromUserInput($url, ['absolute' => TRUE])->toString();
-      }
-
-      return Url::fromUri('base:' . $url, ['absolute' => TRUE])->toString();
-    }
-    catch (\Exception $e) {
-      \Drupal::logger('rest_oai_pmh')->warning('Failed to generate absolute thumbnail URL from "@url". Error: @error', [
-        '@url' => $url,
-        '@error' => $e->getMessage(),
-      ]);
-      return '';
     }
   }
 
