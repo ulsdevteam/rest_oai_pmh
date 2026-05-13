@@ -216,6 +216,8 @@ class DublinCoreRdf extends OaiMetadataMapBase {
           'dc:tableOfContents' => 'dc:description',
           'dc:temporal' => 'dc:coverage',
           'dc:valid' => 'dc:date',
+          // Islandora's non-standard identifier.thumbnail.
+          'dc:identifier.thumbnail' => 'dc:identifier.thumbnail',
         ];
         break;
     }
