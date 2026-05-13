@@ -10,5 +10,8 @@
     "issues": "https://www.drupal.org/project/issues/rest_oai_pmh",
     "source": "http://cgit.drupalcode.org/rest_oai_pmh"
   },
-  "require": { }
+  "require": { },
+  "suggest": {
+    "discoverygarden/dgi_image_discovery": "Provides image discovery support for RDF thumbnail URL callbacks."
+  }
 }
