@@ -67,10 +67,14 @@ class DublinCoreRdf extends OaiMetadataMapBase {
     $rdf_mapping = rdf_get_mapping($entity->getEntityTypeId(), $entity->bundle());
     $allowed_properties = $this->getAllowedProperties('oai_dc');
     foreach ($entity->getFields() as $field_id => $fieldItemList) {
-      if (!$fieldItemList->access() || $fieldItemList->isEmpty()) {
+      if (!$fieldItemList->access()) {
         continue;
       }
       $field_mapping = $rdf_mapping->getPreparedFieldMapping($field_id);
+      $has_callback = !empty($field_mapping['datatype_callback']);
+      if ($fieldItemList->isEmpty() && !$has_callback) {
+        continue;
+      }
       $element = FALSE;
       if (!empty($field_mapping)) {
         // See if the field is mapped to a property in this schema
@@ -106,6 +110,22 @@ class DublinCoreRdf extends OaiMetadataMapBase {
       }
       // If $element is set, we have a valid property.
       if ($element) {
+        if ($fieldItemList->isEmpty() && $has_callback) {
+          $callback = $field_mapping['datatype_callback']['callable'];
+          $arguments = $field_mapping['datatype_callback']['arguments'] ?? NULL;
+          $value = call_user_func($callback, [], $arguments, [
+            'entity' => $entity,
+            'field_name' => $field_id,
+            'field_item' => NULL,
+            'field_item_list' => $fieldItemList,
+            'field_mapping' => $field_mapping,
+          ]);
+          if ($value !== '' && $value !== NULL) {
+            $render_array['elements'][$element][] = $value;
+          }
+          continue;
+        }
+
         // Add all the values for this field so the twig template can print.
         foreach ($fieldItemList as $item) {
           $index = $item->mainPropertyName();
