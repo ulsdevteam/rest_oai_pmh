@@ -25,3 +25,7 @@ services:
   logger.channel.rest_oai_pmh:
     parent: 'logger.channel_base'
     arguments: ['rest_oai_pmh']
+
+  Drupal\rest_oai_pmh\Hook\RestOaiPmhHooks:
+    class: Drupal\rest_oai_pmh\Hook\RestOaiPmhHooks
+    autowire: true
