@@ -3,6 +3,8 @@
 namespace Drupal\rest_oai_pmh\Plugin\OaiMetadataMap;
 
 use Drupal\Core\Entity\ContentEntityInterface;
+use Drupal\Core\Form\OptGroup;
+use Drupal\Core\TypedData\OptionsProviderInterface;
 use Drupal\rest_oai_pmh\Plugin\OaiMetadataMapBase;
 
 /**
@@ -143,6 +145,17 @@ class DublinCoreRdf extends OaiMetadataMapBase {
           }
           elseif ($index == 'target_id' && !empty($item->entity)) {
             $value = $item->entity->label();
+          }
+          // Options-backed fields (List (text)/(integer)/(float)) store a key
+          // that is distinct from the human-readable label. Resolve it the same
+          // way core's own options formatter does, so the feed exports the
+          // label rather than the internal key. Entity reference fields also
+          // implement OptionsProviderInterface, but they are handled above, so
+          // exclude them here to avoid loading every referenceable entity.
+          elseif ($index !== 'target_id' && $item instanceof OptionsProviderInterface) {
+            $key = $item->getValue()[$index];
+            $options = OptGroup::flattenOptions($item->getPossibleOptions());
+            $value = isset($options[$key]) ? (string) $options[$key] : $key;
           }
           else {
             $value = $item->getValue()[$index];
