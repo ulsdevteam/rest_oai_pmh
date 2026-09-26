@@ -2,6 +2,8 @@
 
 namespace Drupal\Tests\rest_oai_pmh\Functional;
 
+use PHPUnit\Framework\Attributes\Group;
+use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 use Drupal\Core\Url;
 use Drupal\Tests\BrowserTestBase;
 
@@ -10,6 +12,8 @@ use Drupal\Tests\BrowserTestBase;
  *
  * @group rest_oai_pmh
  */
+#[Group('rest_oai_pmh')]
+#[RunTestsInSeparateProcesses]
 class LoadTest extends BrowserTestBase {
 
   /**
