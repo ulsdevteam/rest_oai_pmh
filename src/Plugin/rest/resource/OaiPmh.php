@@ -323,14 +323,16 @@ class OaiPmh extends ResourceBase {
     // Make sure a valid verb was passed in as a GET parameter
     // if so, call the respective function implemented in this class.
     if (in_array($verb, $verbs)) {
-      // If we do not have any entries in the cached table,
-      // the cache needs rebuilt.
-      // Do so now instead of waiting on Drupal cron to avoid empty results.
-      if (\Drupal::database()->query('SELECT COUNT(*) FROM {rest_oai_pmh_record}')->fetchField() == 0) {
+      // If no index has ever been built, queue a build. This only queues the
+      // work for cron: building a large repository inside a harvester's HTTP
+      // request would time out, and once a build has started an empty table
+      // just means there is nothing to harvest (yet).
+      if (rest_oai_pmh_build_id() === 0
+        && \Drupal::database()->query('SELECT COUNT(*) FROM {rest_oai_pmh_record}')->fetchField() == 0) {
         $context = new RenderContext();
         \Drupal::service('renderer')->executeInRenderContext(
               $context, function () {
-                  rest_oai_pmh_rebuild_entries();
+                  rest_oai_pmh_cache_views();
               }
           );
       }
@@ -468,6 +470,12 @@ class OaiPmh extends ResourceBase {
       $this->oaiEntity = $entity;
       $identifier = $this->buildIdentifier($entity);
       $this->loadEntity($identifier, TRUE);
+      if (!$this->entity) {
+        // The index is allowed to be stale: this record was deleted or is no
+        // longer viewable. Leave it out of the response and have it checked.
+        rest_oai_pmh_enqueue_sync($entity->entity_type, $entity->entity_id);
+        continue;
+      }
       $this->response[$this->verb]['header'][] = $this->getHeaderById($identifier);
     }
     if (empty($this->response[$this->verb]['header'])) {
@@ -485,6 +493,12 @@ class OaiPmh extends ResourceBase {
       $this->oaiEntity = $entity;
       $identifier = $this->buildIdentifier($entity);
       $this->loadEntity($identifier, TRUE);
+      if (!$this->entity) {
+        // The index is allowed to be stale: this record was deleted or is no
+        // longer viewable. Leave it out of the response and have it checked.
+        rest_oai_pmh_enqueue_sync($entity->entity_type, $entity->entity_id);
+        continue;
+      }
       $this->response[$this->verb]['record'][] = $this->getRecordById($identifier);
     }
     if (empty($this->response[$this->verb]['record'])) {
@@ -599,15 +613,20 @@ class OaiPmh extends ResourceBase {
     $until = $this->currentRequest->get('until');
     $cursor = 0;
     $completeListSize = 0;
+    // Position of the last record already sent: [changed, entity_type, id].
+    $after = NULL;
     // If a resumption token was passed, try to find it in the key store.
     if ($resumption_token) {
       $token = $this->keyValueStore->get($resumption_token);
       // If we found a token and it's not expired, get the values needed.
+      // Tokens issued before keyset paging (no 'after') cannot be resumed.
       if ($token
             && $token['expires'] > \Drupal::time()->getRequestTime()
             && $token['verb'] == $this->verb
+            && array_key_exists('after', $token)
         ) {
         $this->metadataPrefix = $token['metadata_prefix'];
+        $after = $token['after'];
         $cursor = $token['cursor'];
         $set = $token['set'];
         $from = $token['from'];
@@ -651,7 +670,7 @@ class OaiPmh extends ResourceBase {
     $query = $db_conn->select('rest_oai_pmh_record', 'r');
     $query->innerJoin('rest_oai_pmh_member', 'm', 'm.entity_id = r.entity_id AND m.entity_type = r.entity_type');
     $query->innerJoin('rest_oai_pmh_set', 's', 's.set_id = m.set_id');
-    $query->fields('r', ['entity_id', 'entity_type']);
+    $query->fields('r', ['entity_id', 'entity_type', 'changed']);
     if ($db_conn->driver() !== 'pgsql') {
       $query->addExpression('GROUP_CONCAT(m.set_id)', 'sets');
     }
@@ -659,12 +678,14 @@ class OaiPmh extends ResourceBase {
       // XXX: GROUP_CONCAT() doesn't exist in PostgreSQL.
       $query->addExpression("STRING_AGG(m.set_id, ',')", 'sets');
     }
-    $query->groupBy('r.entity_type')->groupBy('r.entity_id');
+    $query->groupBy('r.entity_type')->groupBy('r.entity_id')->groupBy('r.changed');
 
-    // XXX: Result sets can be unpredictable when limiting without an ORDER BY
-    // clause.
+    // Oldest change first, with a unique tiebreaker. Records that are added or
+    // updated while a harvest is in progress therefore land at the end of the
+    // list rather than shifting what the harvester has yet to read, and
+    // resumption tokens can hold a position (below) instead of a row count.
     // @see: https://www.postgresql.org/docs/current/queries-limit.html.
-    $query->orderBy('r.entity_id');
+    $query->orderBy('r.changed')->orderBy('r.entity_type')->orderBy('r.entity_id');
 
     // If set ID was passed in URL, filter on that
     // otherwise filter on all sets as defined on set field.
@@ -686,15 +707,40 @@ class OaiPmh extends ResourceBase {
     // If we haven't checked the complete list size yet
     // i.e. this isn't a call from a resumption token
     // get the complete list size for this request.
+    // (Before the position condition below: it is the size of the whole list.)
     if (empty($completeListSize)) {
       $completeListSize = $query->countQuery()->execute()->fetchField();
     }
 
+    // Resume after the last record the previous page ended on.
+    if ($after) {
+      [$after_changed, $after_type, $after_id] = $after;
+      $same_changed = $query->andConditionGroup()
+        ->condition('r.changed', $after_changed)
+        ->condition($query->orConditionGroup()
+          ->condition('r.entity_type', $after_type, '>')
+          ->condition($query->andConditionGroup()
+            ->condition('r.entity_type', $after_type)
+            ->condition('r.entity_id', $after_id, '>')));
+      $query->condition($query->orConditionGroup()
+        ->condition('r.changed', $after_changed, '>')
+        ->condition($same_changed));
+    }
+
     $this->response[$this->verb]['resumptionToken'] = [];
 
-    // If the total results are more than what was returned here
-    // add a resumption token.
-    if ($completeListSize > ($cursor + $end) && $end > 0) {
+    // Put a pager on the query if there's a pager on the Views exposed to OAI.
+    // One extra row tells us whether there is another page without the list
+    // size (which can go stale while records are being added) being trusted.
+    if ($end > 0) {
+      $query->range(0, $end + 1);
+    }
+    $entities = $query->execute()->fetchAll();
+
+    if ($end > 0 && count($entities) > $end) {
+      $entities = array_slice($entities, 0, $end);
+      $last = end($entities);
+
       // Set the expiration date per the admin settings.
       $expires = \Drupal::time()->getRequestTime() + $this->expiration;
 
@@ -710,7 +756,8 @@ class OaiPmh extends ResourceBase {
       $token = [
         'metadata_prefix' => $this->metadataPrefix,
         'set' => $set,
-        'cursor' => $cursor + $end,
+        'cursor' => $cursor + count($entities),
+        'after' => [$last->changed, $last->entity_type, $last->entity_id],
         'expires' => $expires,
         'verb' => $this->response['request']['@verb'],
         'from' => $from,
@@ -724,13 +771,6 @@ class OaiPmh extends ResourceBase {
       $this->nextTokenId += 1;
       $this->keyValueStore->set('nextTokenId', $this->nextTokenId);
     }
-
-    // Put a pager on the query if there's a pager on the Views exposed to OAI.
-    if ($end > 0) {
-      $query->range($cursor, $end);
-    }
-
-    $entities = $query->execute();
 
     return $entities;
   }
