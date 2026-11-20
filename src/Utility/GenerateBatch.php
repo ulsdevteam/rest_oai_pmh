@@ -262,11 +262,7 @@ class GenerateBatch {
       $view = Views::getView($data['view_id']);
       $view->setDisplay($data['display_id']);
       $view->get_total_rows = TRUE;
-      // The View's pager size is the OAI-PMH response page size; the chunks
-      // used to build the index may be larger.
-      $pager_limit = $view->getItemsPerPage();
-      $chunk = rest_oai_pmh_chunk_size($pager_limit);
-      $view->getDisplay()->setOption('entity_reference_options', ['limit' => $chunk]);
+      $view->getDisplay()->setOption('entity_reference_options', ['limit' => $view->getItemsPerPage()]);
       // Get the first set of results from the View.
       $view->executeDisplay($data['display_id'], $data['arguments']);
       // After we executed the View, see how many items were returned
@@ -278,8 +274,11 @@ class GenerateBatch {
         return;
       }
       $sandbox['offset'] = 0;
-      $sandbox['limit'] = $chunk;
-      $sandbox['pager_limit'] = $pager_limit;
+      // Only meaningful after the View has been executed (see above). The
+      // pager size is the OAI-PMH response page size; the chunks used to
+      // build the index may be larger.
+      $sandbox['pager_limit'] = $view->getItemsPerPage();
+      $sandbox['limit'] = rest_oai_pmh_chunk_size($sandbox['pager_limit']);
       $sandbox['completed'] = 0;
     }
     $data['offset'] = $sandbox['offset'];

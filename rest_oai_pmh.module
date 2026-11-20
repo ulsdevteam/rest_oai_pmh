@@ -442,17 +442,15 @@ function rest_oai_pmh_create_entry_in_queue($queue, $data) {
   $view = Views::getView($data['view_id']);
   $view->setDisplay($data['display_id']);
   $view->get_total_rows = TRUE;
-  // The View's pager size is what OAI-PMH harvesters get per response; the
-  // size of the chunks used to build the index can be larger.
-  $pager_limit = $view->getItemsPerPage();
-  $chunk = rest_oai_pmh_chunk_size($pager_limit);
-  $view->getDisplay()->setOption('entity_reference_options', ['limit' => $chunk]);
+  $view->getDisplay()->setOption('entity_reference_options', ['limit' => $view->getItemsPerPage()]);
   // Get the first set of results from the View.
   $view->executeDisplay($data['display_id'], $data['arguments']);
-  // After we executed the View, see how many items were returned
-  // use this to page through all results.
-  $data['limit'] = $chunk;
-  $data['pager_limit'] = $pager_limit;
+  // After we executed the View, see how many items were returned. This is
+  // only meaningful AFTER execution (before it, it is NULL). It is what
+  // OAI-PMH harvesters get per response; the chunks used to build the index
+  // can be larger.
+  $data['pager_limit'] = $view->getItemsPerPage();
+  $data['limit'] = rest_oai_pmh_chunk_size($data['pager_limit']);
   $total = $view->total_rows;
   $offset = 0;
   while ($total > 0) {
@@ -714,4 +712,23 @@ function rest_oai_pmh_delete_set_if_empty($set_id) {
   if (!$has_members) {
     $db->delete('rest_oai_pmh_set')->condition('set_id', $set_id)->execute();
   }
+}
+
+/**
+ * Best guess at a set's OAI-PMH page size when it cannot be read from a View.
+ *
+ * A View only reports its pager size after it has been executed with the
+ * rebuild's own settings, so the single-record sync reuses what the rebuild
+ * stored: this display's other sets, then any set, then the column default.
+ */
+function rest_oai_pmh_default_pager_limit($view_display = NULL) {
+  $db = \Drupal::database();
+  $limit = NULL;
+  if ($view_display) {
+    $limit = $db->query('SELECT MIN(pager_limit) FROM {rest_oai_pmh_set} WHERE view_display = :d', [':d' => $view_display])->fetchField();
+  }
+  if (!$limit) {
+    $limit = $db->query('SELECT MIN(pager_limit) FROM {rest_oai_pmh_set}')->fetchField();
+  }
+  return $limit ? (int) $limit : 10;
 }

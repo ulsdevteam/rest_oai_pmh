@@ -91,8 +91,10 @@ class RestOaiPmhEntitySync extends QueueWorkerBase {
       if (!$base_type || $base_type->id() !== $type) {
         continue;
       }
-      $pager_limit = $view->getItemsPerPage();
       $evaluated[] = $view_display;
+      // Not read from the View: it is only known after execution. Existing
+      // sets keep what the rebuild stored; new ones get a sensible default.
+      $default_pager_limit = rest_oai_pmh_default_pager_limit($view_display);
 
       foreach ($this->candidateSets($view, $display_id, $view_display, $entity) as $set) {
         if (!$this->isMember($view_id, $display_id, $set['arguments'], $entity)) {
@@ -103,9 +105,13 @@ class RestOaiPmhEntitySync extends QueueWorkerBase {
             'entity_type' => $set['entity_type'],
             'set_id' => $set['set_id'],
           ])
-          ->fields([
+          ->insertFields([
             'label' => $set['label'],
-            'pager_limit' => $pager_limit,
+            'pager_limit' => $default_pager_limit,
+            'view_display' => $view_display,
+          ])
+          ->updateFields([
+            'label' => $set['label'],
             'view_display' => $view_display,
           ])
           ->execute();
