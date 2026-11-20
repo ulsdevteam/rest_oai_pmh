@@ -40,12 +40,22 @@ function rest_oai_pmh_schema() {
         'unsigned' => TRUE,
         'not null' => TRUE,
       ],
+      'build_id' => [
+        'description' => 'The index generation that last confirmed this row.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ],
     ],
     'primary key' => ['entity_type', 'entity_id'],
     'indexes' => [
       'entity_type' => ['entity_type'],
       'created_ts' => ['created'],
       'changed_ts' => ['changed'],
+      'build_id' => ['build_id'],
+      // Supports the keyset ordering used by the OAI-PMH list verbs.
+      'changed_entity' => ['changed', 'entity_type', 'entity_id'],
     ],
   ];
 
@@ -113,12 +123,20 @@ function rest_oai_pmh_schema() {
         'length' => 65,
         'not null' => TRUE,
       ],
+      'build_id' => [
+        'description' => 'The index generation that last confirmed this row.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ],
     ],
     'primary key' => ['entity_type', 'entity_id', 'set_id'],
     'indexes' => [
       'entity_type' => ['entity_type'],
       'entity_target' => ['entity_type', 'entity_id'],
       'set_id' => ['set_id'],
+      'build_id' => ['build_id'],
     ],
   ];
 
@@ -312,4 +330,41 @@ function rest_oai_pmh_update_8007() {
     }
   }
 
+}
+
+/**
+ * Add index generation tracking and a keyset-friendly index.
+ *
+ * Allows the OAI index to be rebuilt in place (without truncating it) and
+ * reconciled afterwards.
+ */
+function rest_oai_pmh_update_8008() {
+  $schema = Database::getConnection()->schema();
+  $tables = rest_oai_pmh_schema();
+  $spec = [
+    'description' => 'The index generation that last confirmed this row.',
+    'type' => 'int',
+    'unsigned' => TRUE,
+    'not null' => TRUE,
+    'default' => 0,
+  ];
+  foreach (['rest_oai_pmh_record', 'rest_oai_pmh_member'] as $table) {
+    if (!$schema->fieldExists($table, 'build_id')) {
+      $schema->addField($table, 'build_id', $spec);
+    }
+    // The index is added separately, with the full table specification, as
+    // MySQL needs the column definition to normalize an index. Checking first
+    // keeps this update safe to re-run if it is interrupted.
+    if (!$schema->indexExists($table, 'build_id')) {
+      $schema->addIndex($table, 'build_id', ['build_id'], $tables[$table]);
+    }
+  }
+  if (!$schema->indexExists('rest_oai_pmh_record', 'changed_entity')) {
+    $schema->addIndex(
+      'rest_oai_pmh_record',
+      'changed_entity',
+      ['changed', 'entity_type', 'entity_id'],
+      $tables['rest_oai_pmh_record']
+    );
+  }
 }

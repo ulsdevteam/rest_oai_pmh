@@ -71,10 +71,16 @@ class ConsumeBatch {
     $sandbox =& $context['sandbox'];
 
     if (!isset($sandbox['total'])) {
+      // Generating the queue jobs is complete; from here on, draining the
+      // queue completes the rebuild.
+      if (rest_oai_pmh_build_state()['status'] === 'generating') {
+        rest_oai_pmh_build_set_status('building');
+      }
       $sandbox['total'] = $this->queue->numberOfItems();
       if ($sandbox['total'] === 0) {
         $context['message'] = $this->t('No records to process.');
         $context['finished'] = 1;
+        rest_oai_pmh_build_maybe_finish();
         return;
       }
       $sandbox['completed'] = 0;
@@ -88,6 +94,7 @@ class ConsumeBatch {
         if (!$item) {
           $context['message'] = $this->t('Queue exhausted');
           $context['finished'] = 1;
+          rest_oai_pmh_build_maybe_finish();
           return;
         }
         $this->queueWorker->processItem($item->data);

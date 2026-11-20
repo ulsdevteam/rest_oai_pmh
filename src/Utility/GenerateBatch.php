@@ -274,11 +274,16 @@ class GenerateBatch {
         return;
       }
       $sandbox['offset'] = 0;
-      $sandbox['limit'] = $view->getItemsPerPage();
+      // Only meaningful after the View has been executed (see above). The
+      // pager size is the OAI-PMH response page size; the chunks used to
+      // build the index may be larger.
+      $sandbox['pager_limit'] = $view->getItemsPerPage();
+      $sandbox['limit'] = rest_oai_pmh_chunk_size($sandbox['pager_limit']);
       $sandbox['completed'] = 0;
     }
     $data['offset'] = $sandbox['offset'];
     $data['limit'] = $sandbox['limit'];
+    $data['pager_limit'] = $sandbox['pager_limit'];
     // Queue the information we found to be processed by the queue.
     $this->queue->createItem($data);
     $context['message'] = $this->t('Queued items for @set_id in @view_id:@display_id with offset @offset (@current/@total).', [

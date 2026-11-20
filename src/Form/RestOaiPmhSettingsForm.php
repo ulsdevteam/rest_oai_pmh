@@ -275,7 +275,7 @@ class RestOaiPmhSettingsForm extends ConfigFormBase {
       '#description' => $this->t(
           '<p>Select which caching technique should be used to ensure your repository is up to date with changes in your repo.</p>
         <ul>
-          <li>Liberal Cache Clearing Strategy: will clear cache whenever an entity that could possibly effect the OAI repository is added/edited/updated</li>
+          <li>Liberal Cache Clearing Strategy: whenever an entity that could affect the OAI repository is added/edited/updated, that one record is re-checked in the background (on cron) and added, updated or removed. The repository is never emptied, and a full rebuild is only started when an exposed View is changed.</li>
           <li>Conservative Cache Clearing Strategy: will only remove entities from the OAI repository when they are deleted from Drupal. Will require more manual rebuilds or cron configuration.</li>
         </ul>'
       ),

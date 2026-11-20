@@ -91,6 +91,13 @@ function rest_oai_pmh_entity_alter($entity, $op = '') {
 
 /**
  * Create QueueWorker to execute all, or a specific set of Views.
+ *
+ * A full rebuild (no $view_displays passed) starts a new index "generation".
+ * The existing {rest_oai_pmh_*} tables are NOT truncated: they keep serving
+ * harvesters while the rebuild runs, rows are re-stamped with the new
+ * generation as they are confirmed, and once the queue is drained anything
+ * left on an older generation is re-verified individually (see
+ * rest_oai_pmh_build_maybe_finish()).
  */
 function rest_oai_pmh_cache_views($view_displays = FALSE, $queue_name = 'rest_oai_pmh_views_cache_cron', $batch = FALSE) {
   // Get the queue factory.
@@ -99,21 +106,13 @@ function rest_oai_pmh_cache_views($view_displays = FALSE, $queue_name = 'rest_oa
 
   // If no view_displays were passed
   // get a list of all view displays set for OAI-PMH.
-  if (!$view_displays) {
+  $full_rebuild = !$view_displays;
+  if ($full_rebuild) {
     $config = \Drupal::config('rest_oai_pmh.settings');
     $view_displays = $config->get('view_displays') ?: [];
-    // Flush the queue since we're rebuilding everything.
+    // Flush the queue: a new full rebuild supersedes any one in flight.
     $queue->deleteQueue();
-
-    // Truncate the tables since we're caching all the views.
-    $tables = [
-      'rest_oai_pmh_set',
-      'rest_oai_pmh_record',
-      'rest_oai_pmh_member',
-    ];
-    foreach ($tables as $table) {
-      \Drupal::database()->truncate($table)->execute();
-    }
+    rest_oai_pmh_build_set_state(rest_oai_pmh_build_id() + 1, 'generating');
   }
 
   if ($batch) {
@@ -175,6 +174,11 @@ function rest_oai_pmh_cache_views($view_displays = FALSE, $queue_name = 'rest_oa
         ];
         rest_oai_pmh_create_entry_in_queue($queue, $data);
       }
+    }
+    // All jobs are queued; from here the queue draining marks completion.
+    // (In batch mode ConsumeBatch makes this transition instead.)
+    if ($full_rebuild) {
+      rest_oai_pmh_build_set_status('building');
     }
   }
 }
@@ -273,6 +277,7 @@ function rest_oai_pmh_rebuild_entries() {
   while ($item = $queue->claimItem()) {
     rest_oai_pmh_process_queue($item);
   }
+  rest_oai_pmh_build_maybe_finish();
 
   return $item;
 }
@@ -440,9 +445,12 @@ function rest_oai_pmh_create_entry_in_queue($queue, $data) {
   $view->getDisplay()->setOption('entity_reference_options', ['limit' => $view->getItemsPerPage()]);
   // Get the first set of results from the View.
   $view->executeDisplay($data['display_id'], $data['arguments']);
-  // After we executed the View, see how many items were returned
-  // use this to page through all results.
-  $data['limit'] = $view->getItemsPerPage();
+  // After we executed the View, see how many items were returned. This is
+  // only meaningful AFTER execution (before it, it is NULL). It is what
+  // OAI-PMH harvesters get per response; the chunks used to build the index
+  // can be larger.
+  $data['pager_limit'] = $view->getItemsPerPage();
+  $data['limit'] = rest_oai_pmh_chunk_size($data['pager_limit']);
   $total = $view->total_rows;
   $offset = 0;
   while ($total > 0) {
@@ -455,4 +463,272 @@ function rest_oai_pmh_create_entry_in_queue($queue, $data) {
     $total -= $data['limit'];
     $offset += $data['limit'];
   }
+}
+
+/**
+ * Name of the queue holding single-record sync jobs.
+ *
+ * It is a queue of its own, with its own cron time slice, so that fresh
+ * inserts/updates are never stuck behind a long full rebuild.
+ */
+const REST_OAI_PMH_SYNC_QUEUE = 'rest_oai_pmh_entity_sync';
+
+/**
+ * Implements hook_cron().
+ */
+function rest_oai_pmh_cron() {
+  // The rebuild queue itself is drained by its cron queue worker. Here we only
+  // notice that it has been drained and reconcile.
+  rest_oai_pmh_build_maybe_finish();
+}
+
+/**
+ * Number of rows each rebuild queue job indexes.
+ *
+ * Defaults to the View's pager size; set rest_oai_pmh.settings:build_chunk_size
+ * (e.g. `drush cset rest_oai_pmh.settings build_chunk_size 200`) to index in
+ * bigger chunks without changing how many records harvesters get per page.
+ */
+function rest_oai_pmh_chunk_size($pager_limit) {
+  $chunk = (int) \Drupal::config('rest_oai_pmh.settings')->get('build_chunk_size');
+  return $chunk > 0 ? $chunk : (int) $pager_limit;
+}
+
+/**
+ * Returns the state of the most recent full rebuild.
+ *
+ * @return array
+ *   Keys: id (generation), status (generating|building|complete), started,
+ *   finished.
+ */
+function rest_oai_pmh_build_state() {
+  return (\Drupal::state()->get('rest_oai_pmh.build') ?: []) + [
+    'id' => 0,
+    'status' => 'complete',
+    'started' => 0,
+    'finished' => 0,
+  ];
+}
+
+/**
+ * Returns the current index generation.
+ */
+function rest_oai_pmh_build_id() {
+  return (int) rest_oai_pmh_build_state()['id'];
+}
+
+/**
+ * Starts a generation.
+ */
+function rest_oai_pmh_build_set_state($id, $status) {
+  $state = rest_oai_pmh_build_state();
+  $state['id'] = (int) $id;
+  $state['status'] = $status;
+  $state['started'] = \Drupal::time()->getRequestTime();
+  \Drupal::state()->set('rest_oai_pmh.build', $state);
+}
+
+/**
+ * Moves the current generation to a new status.
+ */
+function rest_oai_pmh_build_set_status($status) {
+  $state = rest_oai_pmh_build_state();
+  $state['status'] = $status;
+  if ($status === 'complete') {
+    $state['finished'] = \Drupal::time()->getRequestTime();
+  }
+  \Drupal::state()->set('rest_oai_pmh.build', $state);
+}
+
+/**
+ * Finishes a full rebuild once the rebuild queue has been drained.
+ *
+ * Nothing is deleted just because a rebuild did not see it: offset paging can
+ * skip a row when something earlier in the sort order is removed mid-build.
+ * Instead every row still on an older generation is queued for an individual
+ * check against the View, which either re-confirms or removes it.
+ *
+ * @return bool
+ *   TRUE if the reconcile jobs were queued by this call.
+ */
+function rest_oai_pmh_build_maybe_finish() {
+  if (rest_oai_pmh_build_state()['status'] !== 'building') {
+    return FALSE;
+  }
+  if (\Drupal::queue('rest_oai_pmh_views_cache_cron')->numberOfItems() > 0) {
+    return FALSE;
+  }
+  $lock = \Drupal::lock();
+  if (!$lock->acquire('rest_oai_pmh_build_finish', 120)) {
+    return FALSE;
+  }
+  try {
+    $state = rest_oai_pmh_build_state();
+    if ($state['status'] !== 'building') {
+      return FALSE;
+    }
+    $queue = \Drupal::queue(REST_OAI_PMH_SYNC_QUEUE);
+    $stale = \Drupal::database()->query(
+      'SELECT entity_type, entity_id FROM {rest_oai_pmh_record} WHERE build_id < :id1
+       UNION
+       SELECT entity_type, entity_id FROM {rest_oai_pmh_member} WHERE build_id < :id2',
+      [':id1' => $state['id'], ':id2' => $state['id']]
+    );
+    foreach ($stale as $row) {
+      $queue->createItem([
+        'entity_type' => $row->entity_type,
+        'entity_id' => $row->entity_id,
+        'op' => 'verify',
+      ]);
+    }
+    rest_oai_pmh_build_set_status('complete');
+    return TRUE;
+  }
+  finally {
+    $lock->release('rest_oai_pmh_build_finish');
+  }
+}
+
+/**
+ * Entity types that the configured View displays query.
+ *
+ * @return string[]
+ *   Entity type IDs.
+ */
+function rest_oai_pmh_exposed_entity_types() {
+  $types = &drupal_static(__FUNCTION__);
+  if ($types === NULL) {
+    $types = [];
+    $displays = \Drupal::config('rest_oai_pmh.settings')->get('view_displays') ?: [];
+    foreach ($displays as $view_display) {
+      [$view_id] = explode(':', $view_display);
+      $view = Views::getView($view_id);
+      if ($view && ($entity_type = $view->getBaseEntityType())) {
+        $types[$entity_type->id()] = $entity_type->id();
+      }
+    }
+    $types = array_values($types);
+  }
+  return $types;
+}
+
+/**
+ * Entity types that currently provide sets (e.g. taxonomy_term).
+ *
+ * @return string[]
+ *   Entity type IDs.
+ */
+function rest_oai_pmh_set_entity_types() {
+  $types = &drupal_static(__FUNCTION__);
+  if ($types === NULL) {
+    $types = \Drupal::database()->query('SELECT DISTINCT entity_type FROM {rest_oai_pmh_set} WHERE entity_type <> :view', [':view' => 'view'])->fetchCol();
+  }
+  return $types;
+}
+
+/**
+ * Queues a single entity to be (re)checked against the OAI Views.
+ *
+ * Cheap to call from entity hooks: it filters out entity types that cannot
+ * matter, and otherwise only writes one queue item.
+ */
+function rest_oai_pmh_enqueue_entity_sync(EntityInterface $entity, $op = 'update') {
+  $type = $entity->getEntityTypeId();
+  if (!in_array($type, rest_oai_pmh_exposed_entity_types(), TRUE)
+    && !in_array($type, rest_oai_pmh_set_entity_types(), TRUE)) {
+    return;
+  }
+  rest_oai_pmh_enqueue_sync($type, $entity->id(), $op);
+}
+
+/**
+ * Queues a single entity to be (re)checked, without filtering.
+ */
+function rest_oai_pmh_enqueue_sync($entity_type, $entity_id, $op = 'verify') {
+  \Drupal::queue(REST_OAI_PMH_SYNC_QUEUE)->createItem([
+    'entity_type' => $entity_type,
+    'entity_id' => $entity_id,
+    'op' => $op,
+  ]);
+}
+
+/**
+ * Upserts one record and its membership of one set.
+ *
+ * Shared by the full rebuild workers and the single-record sync worker.
+ */
+function rest_oai_pmh_index_entity(EntityInterface $entity, $set_id, $build_id) {
+  $db = \Drupal::database();
+  $changed = $entity->hasField('changed') ? $entity->changed->value : \Drupal::time()->getRequestTime();
+  $created = $entity->hasField('created') ? $entity->created->value : $changed;
+  $keys = [
+    'entity_type' => $entity->getEntityTypeId(),
+    'entity_id' => $entity->id(),
+  ];
+  $db->merge('rest_oai_pmh_record')
+    ->keys($keys)
+    ->fields([
+      'created' => $created,
+      'changed' => $changed,
+      'build_id' => $build_id,
+    ])
+    ->execute();
+  $db->merge('rest_oai_pmh_member')
+    ->keys($keys + ['set_id' => $set_id])
+    ->fields(['build_id' => $build_id])
+    ->execute();
+}
+
+/**
+ * Removes one entity from the OAI tables, and any set left empty by that.
+ *
+ * Unlike rest_oai_pmh_remove_record() this never treats the entity as a set.
+ */
+function rest_oai_pmh_unindex_entity($entity_type, $entity_id) {
+  $db = \Drupal::database();
+  $set_ids = $db->query('SELECT set_id FROM {rest_oai_pmh_member} WHERE entity_type = :t AND entity_id = :i', [
+    ':t' => $entity_type,
+    ':i' => $entity_id,
+  ])->fetchCol();
+  $db->delete('rest_oai_pmh_member')
+    ->condition('entity_type', $entity_type)
+    ->condition('entity_id', $entity_id)
+    ->execute();
+  $db->delete('rest_oai_pmh_record')
+    ->condition('entity_type', $entity_type)
+    ->condition('entity_id', $entity_id)
+    ->execute();
+  foreach ($set_ids as $set_id) {
+    rest_oai_pmh_delete_set_if_empty($set_id);
+  }
+}
+
+/**
+ * Deletes a set that has no members left.
+ */
+function rest_oai_pmh_delete_set_if_empty($set_id) {
+  $db = \Drupal::database();
+  $has_members = $db->query('SELECT 1 FROM {rest_oai_pmh_member} WHERE set_id = :s LIMIT 1', [':s' => $set_id])->fetchField();
+  if (!$has_members) {
+    $db->delete('rest_oai_pmh_set')->condition('set_id', $set_id)->execute();
+  }
+}
+
+/**
+ * Best guess at a set's OAI-PMH page size when it cannot be read from a View.
+ *
+ * A View only reports its pager size after it has been executed with the
+ * rebuild's own settings, so the single-record sync reuses what the rebuild
+ * stored: this display's other sets, then any set, then the column default.
+ */
+function rest_oai_pmh_default_pager_limit($view_display = NULL) {
+  $db = \Drupal::database();
+  $limit = NULL;
+  if ($view_display) {
+    $limit = $db->query('SELECT MIN(pager_limit) FROM {rest_oai_pmh_set} WHERE view_display = :d', [':d' => $view_display])->fetchField();
+  }
+  if (!$limit) {
+    $limit = $db->query('SELECT MIN(pager_limit) FROM {rest_oai_pmh_set}')->fetchField();
+  }
+  return $limit ? (int) $limit : 10;
 }

@@ -71,6 +71,9 @@ abstract class RestOaiPmhViewsCacheBase extends QueueWorkerBase implements Conta
     $display_id = $data['display_id'];
     $offset = $data['offset'] ?? NULL;
     $limit = $data['limit'];
+    // The size of the OAI-PMH response pages. Jobs queued before this
+    // option existed used the chunk size for both.
+    $pager_limit = $data['pager_limit'] ?? $limit;
     $arguments = $data['arguments'];
     $this->setId = $data['set_id'];
     $set_entity_type = $data['set_entity_type'];
@@ -80,21 +83,22 @@ abstract class RestOaiPmhViewsCacheBase extends QueueWorkerBase implements Conta
     // Load the View and apply the display ID.
     $view = Views::getView($view_id);
     $view->setDisplay($display_id);
-    $view->getDisplay()->setOption('entity_reference_options', ['limit' => $view->getItemsPerPage()]);
+    $view->getDisplay()->setOption('entity_reference_options', ['limit' => $limit]);
     if (!is_null($offset)) {
       $view->setOffset($offset);
     }
 
-    // Make sure we fetch the total results on the first execution
-    // so we can page through all the results.
-    $view->get_total_rows = TRUE;
-    // Get the first set of results from the View.
+    // Get this chunk of results from the View. The total was already worked
+    // out when the jobs were queued, so there is no need to pay for a count
+    // query on every chunk.
     $members = $view->executeDisplay($display_id, $arguments);
-    // After we executed the View, we'll know how many items were returned
-    // use this to page through all results.
-    $total = $view->total_rows;
     // If some results were returned, save them to our rest_oai_pmh_* tables.
-    if ($total > 0) {
+    //
+    // Deliberately nothing is removed here when a chunk comes back empty: this
+    // chunk may just be past the end because content was removed mid-build.
+    // Anything that no longer belongs is cleaned up by the reconcile step
+    // once the whole rebuild has been drained.
+    if (!empty($members)) {
       // Init the variables used for the UPSERT db call to add/update this SET.
       $merge_keys = [
         'entity_type',
@@ -109,7 +113,7 @@ abstract class RestOaiPmhViewsCacheBase extends QueueWorkerBase implements Conta
         ->fields(
                 [
                   'label' => $set_label,
-                  'pager_limit' => $limit,
+                  'pager_limit' => $pager_limit,
                   'view_display' => $view_display,
                 ]
             )->execute();
@@ -121,14 +125,6 @@ abstract class RestOaiPmhViewsCacheBase extends QueueWorkerBase implements Conta
 
       // Add the results returned to the OAI cache tables.
       $this->indexViewRecords($members);
-
-      // @todo track records that existed BEFORE we indexed the sets, and rm
-      // any records that once belonged to the set but might no longer belong.
-    }
-    // If no results were returned, make sure this set is removed from
-    // our tables so it won't be exposed to OAI-PMH.
-    else {
-      rest_oai_pmh_remove_set($this->setId);
     }
   }
 
@@ -136,41 +132,12 @@ abstract class RestOaiPmhViewsCacheBase extends QueueWorkerBase implements Conta
    * Helper function. Add items returned by a view to the OAI cache tables.
    */
   protected function indexViewRecords($members = FALSE) {
-    foreach ($members as $id => $row) {
-      // Init the variables used for the UPSERT database call
-      // to add/update this RECORD.
-      $merge_keys = [
-        'entity_type',
-        'entity_id',
-      ];
-      $merge_values = [
-        $this->memberEntityType,
-        $id,
-      ];
-      // Load the entity, partly to ensure it exists
-      // also to get the changed/created properties.
-      $entity = $this->memberEntityStorage->load($id);
-      if ($entity) {
-        // Get the changed/created values, if they exist.
-        $changed = $entity->hasField('changed') ? $entity->changed->value : \Drupal::time()->requestTime();
-        $created = $entity->hasField('created') ? $entity->created->value : $changed;
-        // Upsert the record into our cache table.
-        $this->db->merge('rest_oai_pmh_record')
-          ->keys($merge_keys, $merge_values)
-          ->fields(
-                  [
-                    'created' => $created,
-                    'changed' => $changed,
-                  ]
-              )->execute();
-
-        // Add this record to the respective set.
-        $merge_keys[] = 'set_id';
-        $merge_values[] = $this->setId;
-        $this->db->merge('rest_oai_pmh_member')
-          ->keys($merge_keys, $merge_values)
-          ->execute();
-      }
+    $build_id = rest_oai_pmh_build_id();
+    // Load the entities in one go, partly to ensure they exist, also to get
+    // the changed/created properties.
+    $entities = $this->memberEntityStorage->loadMultiple(array_keys($members));
+    foreach ($entities as $entity) {
+      rest_oai_pmh_index_entity($entity, $this->setId, $build_id);
     }
   }
 
